@@ -73,7 +73,7 @@ roslaunch simple_path_planner planner.launch
 
 ## Simulation Screenshot
 
-<img src="https://github.com/shahkarKhan24/ROS_Path_Planner/blob/main/Maps/simulation%20ss1.png" width="500"/>
+<img src="https://github.com/shahkarKhan24/ROS_Path_Planner/blob/main/Maps/simulation%20ss1.png" width="700"/>
 
 
 
