@@ -1,0 +1,252 @@
+// ROS and standard libraries
+#include <ros/ros.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <nav_msgs/OccupancyGrid.h>
+#include <visualization_msgs/Marker.h>
+#include <queue>
+#include <unordered_map>
+#include <cmath>
+#include <set>
+
+// Status flags
+bool has_valid_start = false;
+bool has_valid_goal = false;
+bool map_loaded = false;
+bool path_updated = false;
+
+// Inputs
+geometry_msgs::Point start_point;
+geometry_msgs::Point goal_point;
+nav_msgs::OccupancyGrid current_map;
+nav_msgs::OccupancyGrid::ConstPtr map_ptr;
+
+// Visualization
+ros::Publisher marker_pub;
+
+// Planner parameters
+int obstacle_penalty;
+
+std::pair<int, int> convertToGridCoords(const geometry_msgs::Point& p) {
+    int gx = (p.x - current_map.info.origin.position.x) / current_map.info.resolution;
+    int gy = (p.y - current_map.info.origin.position.y) / current_map.info.resolution;
+    return {gx, gy};
+}
+
+bool isCellNavigable(const geometry_msgs::Point& p) {
+    if (!map_loaded) {
+        ROS_WARN("No map received yet.");
+        return false;
+    }
+
+    auto [gx, gy] = convertToGridCoords(p);
+    if (gx < 0 || gx >= current_map.info.width || gy < 0 || gy >= current_map.info.height) {
+        ROS_WARN("Point is outside map boundaries.");
+        return false;
+    }
+
+    int idx = gy * current_map.info.width + gx;
+    int value = current_map.data[idx];
+
+    if (value == -1) {
+        ROS_WARN("Unknown cell.");
+        return false;
+    } else if (value >= 80) {
+        ROS_WARN("Obstacle at cell.");
+        return false;
+    }
+
+    return true;
+}
+
+void mapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg) {
+    current_map = *msg;
+    map_ptr = msg;
+    map_loaded = true;
+    path_updated = false;
+    ROS_INFO("Map received: resolution = %f", current_map.info.resolution);
+}
+
+void displayPointMarker(const geometry_msgs::Point& point, int id, float r, float g, float b) {
+    visualization_msgs::Marker m;
+    m.header.frame_id = "map";
+    m.header.stamp = ros::Time::now();
+    m.ns = "navigation_points";
+    m.id = id;
+    m.type = visualization_msgs::Marker::SPHERE;
+    m.scale.x = m.scale.y = m.scale.z = 0.5;
+    m.color.r = r;
+    m.color.g = g;
+    m.color.b = b;
+    m.color.a = 1.0;
+    m.pose.position = point;
+    marker_pub.publish(m);
+}
+
+void startCallback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& msg) {
+    start_point = msg->pose.pose.position;
+    has_valid_start = isCellNavigable(start_point);
+    path_updated = false;
+
+    if (has_valid_start)
+        displayPointMarker(start_point,1, 1.0, 1.0, 0.0 ); // yellow
+
+    ROS_INFO("Start Point: x=%.2f, y=%.2f", start_point.x, start_point.y);
+}
+
+void goalCallback(const geometry_msgs::PoseStamped::ConstPtr& msg) {
+    goal_point = msg->pose.position;
+    has_valid_goal = isCellNavigable(goal_point);
+    path_updated = false;
+
+    if (has_valid_goal)
+        displayPointMarker(goal_point,2, 1.0, 0.0, 0.0 ); // red
+
+    ROS_INFO("Goal Point: x=%.2f, y=%.2f", goal_point.x, goal_point.y);
+}
+
+struct Node {
+    int x, y;
+    double g, h;
+    bool operator>(const Node& other) const {
+        return (g + h) > (other.g + other.h);
+    }
+};
+
+double computeHeuristic(const Node& a, const Node& b) {
+    return std::hypot(a.x - b.x, a.y - b.y); // Always use Euclidean
+}
+
+double computePenalty(int x, int y) {
+    int idx = y * current_map.info.width + x;
+    int val = current_map.data[idx];
+
+    if (val >= 80) return obstacle_penalty;
+
+    double min_dist = std::numeric_limits<double>::max();
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
+            int nx = x + dx;
+            int ny = y + dy;
+            if (nx >= 0 && nx < current_map.info.width && ny >= 0 && ny < current_map.info.height) {
+                int n_idx = ny * current_map.info.width + nx;
+                if (current_map.data[n_idx] >= 80)
+                    min_dist = std::min(min_dist, std::hypot(dx, dy));
+            }
+        }
+    }
+    return (min_dist < std::numeric_limits<double>::max()) ? obstacle_penalty / min_dist : 0.0;
+}
+
+std::vector<geometry_msgs::Point> runAStarSearch() {
+    auto [sx, sy] = convertToGridCoords(start_point);
+    auto [gx, gy] = convertToGridCoords(goal_point);
+
+    std::priority_queue<Node, std::vector<Node>, std::greater<Node>> frontier;
+    std::unordered_map<int, int> came_from;
+    std::unordered_map<int, double> cost_record;
+
+    int width = current_map.info.width;
+    frontier.push({sx, sy, 0, computeHeuristic({sx, sy}, {gx, gy})});
+    cost_record[sy * width + sx] = 0;
+
+    std::vector<std::pair<int, int>> moves = {{0,1},{1,0},{0,-1},{-1,0},{1,1},{1,-1},{-1,1},{-1,-1}};
+    std::set<std::pair<int, int>> visited;
+
+    while (!frontier.empty()) {
+        Node current = frontier.top(); frontier.pop();
+
+        if (current.x == gx && current.y == gy) {
+            std::vector<geometry_msgs::Point> path;
+            int idx = gy * width + gx;
+            while (came_from.count(idx)) {
+                int px = idx % width;
+                int py = idx / width;
+                geometry_msgs::Point p;
+                p.x = px * current_map.info.resolution + current_map.info.origin.position.x;
+                p.y = py * current_map.info.resolution + current_map.info.origin.position.y;
+                path.push_back(p);
+                idx = came_from[idx];
+            }
+            return path;
+        }
+
+        visited.insert({current.x, current.y});
+
+        for (auto [dx, dy] : moves) {
+            int nx = current.x + dx;
+            int ny = current.y + dy;
+            if (nx < 0 || ny < 0 || nx >= width || ny >= current_map.info.height || visited.count({nx, ny}))
+                continue;
+
+            geometry_msgs::Point wp;
+            wp.x = nx * current_map.info.resolution + current_map.info.origin.position.x;
+            wp.y = ny * current_map.info.resolution + current_map.info.origin.position.y;
+
+            if (!isCellNavigable(wp)) continue;
+
+            double step_cost = cost_record[current.y * width + current.x] + 1 + computePenalty(nx, ny);
+            int n_idx = ny * width + nx;
+
+            if (!cost_record.count(n_idx) || step_cost < cost_record[n_idx]) {
+                cost_record[n_idx] = step_cost;
+                came_from[n_idx] = current.y * width + current.x;
+                double h = computeHeuristic({nx, ny}, {gx, gy});
+                frontier.push({nx, ny, step_cost, h});
+            }
+        }
+    }
+    return {};
+}
+
+void showPathInRViz() {
+    if (!has_valid_start || !has_valid_goal || !map_loaded) return;
+
+    visualization_msgs::Marker path_line;
+    path_line.header.frame_id = "map";
+    path_line.header.stamp = ros::Time::now();
+    path_line.ns = "path_line";
+    path_line.id = 3;
+    path_line.type = visualization_msgs::Marker::LINE_STRIP;
+    path_line.scale.x = 0.1;
+    path_line.color.r = 0.5;
+    path_line.color.g = 0.0;
+    path_line.color.b = 0.5;
+    path_line.color.a = 1.0;
+
+    if (!path_updated) {
+        auto result_path = runAStarSearch();
+        if (!result_path.empty()) {
+            for (const auto& pt : result_path)
+                path_line.points.push_back(pt);
+            marker_pub.publish(path_line);
+            ROS_INFO("Path successfully generated.");
+        } else {
+            ROS_WARN("Could not find a valid path.");
+        }
+        path_updated = true;
+    }
+}
+
+int main(int argc, char** argv) {
+    ros::init(argc, argv, "refactored_astar_planner");
+    ros::NodeHandle nh;
+    ros::NodeHandle priv("~");
+
+    priv.getParam("penalty", obstacle_penalty);
+    ROS_INFO("Obstacle penalty: %d", obstacle_penalty);
+
+    ros::Subscriber sub_start = nh.subscribe("initialpose", 10, startCallback);
+    ros::Subscriber sub_goal = nh.subscribe("move_base_simple/goal", 10, goalCallback);
+    ros::Subscriber sub_map = nh.subscribe("map", 1, mapCallback);
+
+    marker_pub = nh.advertise<visualization_msgs::Marker>("visualization_marker", 10);
+
+    ros::Rate loop(10);
+    while (ros::ok()) {
+        ros::spinOnce();
+        showPathInRViz();
+        loop.sleep();
+    }
+    return 0;
+}

@@ -1,0 +1,16 @@
+<launch>
+
+  <!-- Load the static map -->
+  <node name="map_server" pkg="map_server" type="map_server" args="$(find simple_path_planner)/maps/map.yaml" />
+
+  <!-- Launch the refactored A* path planner -->
+  <node name="simple_path_planner_node" pkg="simple_path_planner" type="simple_path_planner_node" output="screen">
+    <param name="heuristic_type" value="e"/>
+    <param name="penalty" value="1000"/>
+  </node>
+
+  <!-- Start RViz (optional) -->
+  <node pkg="rviz" type="rviz" name="rviz" />
+  
+</launch>
+
