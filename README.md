@@ -30,7 +30,7 @@ simple_path_planner/
 
 ---
 
-## 🛠Building the Package
+## Building the Package
 
 Open a terminal and run:
 
