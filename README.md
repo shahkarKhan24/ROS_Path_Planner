@@ -21,11 +21,9 @@ simple_path_planner/
 ├── launch/
 │   └── planner.launch
 ├── maps/
-│   └── map.yaml + map.pgm
+│   └── map.yaml + map.png
 ├── src/
-│   └── refactored_astar_planner.cpp
-├── docs/
-│   └── simulation_example.png
+│   └── planner.cpp
 ├── CMakeLists.txt
 └── package.xml
 ```
