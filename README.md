@@ -1,6 +1,6 @@
 # ROS Path Planner
 
-This project implements a basic but robust **A\* path planner** using ROS and C++. It computes the shortest path from a given start position to a goal in a 2D occupancy grid map while avoiding obstacles.
+This project implements a basic but robust **A\* path planner** using ROS and C++. It computes the shortest path from a given start position to a goal in a 2D occupancy grid map while avoiding obstacles. This planner uses **Euclidean distance** as the heuristic metric for A*. But as an extension of this project, the code can be edited to use other heuristic metrics
 
 The path and important positions (start, goal) are visualized in RViz using colored markers.
 ---
@@ -56,6 +56,7 @@ roslaunch simple_path_planner planner.launch
 
 
 
+
 ---
 
 ## Using the Planner in RViz
@@ -70,18 +71,13 @@ roslaunch simple_path_planner planner.launch
    - Use the **2D Nav Goal** tool to set the goal pose
 ---
 
-## 🖼️ Simulation Screenshot
+## Simulation Screenshot
 
-> ![Simulation](https://github.com/shahkarKhan24/ROS_Path_Planner/blob/main/Maps/simulation%20ss1.png)
-
-
----
+<img src="https://github.com/shahkarKhan24/ROS_Path_Planner/blob/main/Maps/simulation%20ss1.png" width="500"/>
 
 
 
-## 🔍 Heuristic
 
-This planner uses **Euclidean distance** as the heuristic metric for A*. But as an extension of this project, the code can be edited to use other heuristic metrics
 
 
 
