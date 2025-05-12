@@ -72,9 +72,8 @@ roslaunch simple_path_planner planner.launch
 
 ## 🖼️ Simulation Screenshot
 
-> ![Simulation](docs/simulation_example.png)
+> ![Simulation](https://github.com/shahkarKhan24/ROS_Path_Planner/blob/main/Maps/simulation%20ss1.png)
 
-Place your screenshot in the `docs/` folder with this exact filename: `simulation_example.png`.
 
 ---
 
